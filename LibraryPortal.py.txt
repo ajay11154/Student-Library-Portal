@@ -1,0 +1,186 @@
+import tkinter as tk
+from tkinter import messagebox, ttk
+import sqlite3
+from datetime import datetime, timedelta
+
+class LibraryApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Student Library Portal")
+        self.root.geometry("800x600")
+        
+        # --- DATABASE SETUP ---
+        self.conn = sqlite3.connect("library.db")
+        self.cur = self.conn.cursor()
+        self.setup_database()
+        
+        # --- GUI SETUP ---
+        # Create Tabs
+        self.notebook = ttk.Notebook(root)
+        self.notebook.pack(pady=10, expand=True)
+        
+        # Frame 1: Manage Books
+        self.frame_books = tk.Frame(self.notebook, width=800, height=550)
+        self.frame_books.pack(fill="both", expand=True)
+        self.notebook.add(self.frame_books, text="Manage Books")
+        
+        # Frame 2: Issue Book
+        self.frame_issue = tk.Frame(self.notebook, width=800, height=550)
+        self.frame_issue.pack(fill="both", expand=True)
+        self.notebook.add(self.frame_issue, text="Issue Book")
+        
+        # Frame 3: Return & Fines
+        self.frame_return = tk.Frame(self.notebook, width=800, height=550)
+        self.frame_return.pack(fill="both", expand=True)
+        self.notebook.add(self.frame_return, text="Return & Fines")
+        
+        self.setup_books_tab()
+        self.setup_issue_tab()
+        self.setup_return_tab()
+
+    def setup_database(self):
+        # Table for Books
+        self.cur.execute("""
+            CREATE TABLE IF NOT EXISTS books (
+                book_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                author TEXT NOT NULL,
+                status TEXT DEFAULT 'Available'
+            )
+        """)
+        # Table for Issued Books
+        self.cur.execute("""
+            CREATE TABLE IF NOT EXISTS issues (
+                issue_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id INTEGER,
+                student_name TEXT,
+                issue_date TEXT,
+                FOREIGN KEY(book_id) REFERENCES books(book_id)
+            )
+        """)
+        self.conn.commit()
+
+    # --- TAB 1: MANAGE BOOKS ---
+    def setup_books_tab(self):
+        tk.Label(self.frame_books, text="Add New Book", font=("Arial", 14, "bold")).pack(pady=10)
+        
+        tk.Label(self.frame_books, text="Title:").pack()
+        self.entry_title = tk.Entry(self.frame_books, width=40)
+        self.entry_title.pack()
+        
+        tk.Label(self.frame_books, text="Author:").pack()
+        self.entry_author = tk.Entry(self.frame_books, width=40)
+        self.entry_author.pack()
+        
+        tk.Button(self.frame_books, text="Add Book", command=self.add_book, bg="#4CAF50", fg="white").pack(pady=10)
+        
+        tk.Label(self.frame_books, text="Available Books:", font=("Arial", 12)).pack(pady=5)
+        self.book_list = tk.Listbox(self.frame_books, width=60, height=10)
+        self.book_list.pack()
+        
+        tk.Button(self.frame_books, text="Refresh List", command=self.load_books).pack(pady=5)
+        self.load_books()
+
+    def add_book(self):
+        title = self.entry_title.get()
+        author = self.entry_author.get()
+        if title and author:
+            self.cur.execute("INSERT INTO books (title, author) VALUES (?, ?)", (title, author))
+            self.conn.commit()
+            messagebox.showinfo("Success", "Book Added Successfully!")
+            self.entry_title.delete(0, tk.END)
+            self.entry_author.delete(0, tk.END)
+            self.load_books()
+        else:
+            messagebox.showwarning("Input Error", "Please fill all fields")
+
+    def load_books(self):
+        self.book_list.delete(0, tk.END)
+        self.cur.execute("SELECT * FROM books WHERE status='Available'")
+        for row in self.cur.fetchall():
+            self.book_list.insert(tk.END, f"ID: {row[0]} | {row[1]} by {row[2]}")
+
+    # --- TAB 2: ISSUE BOOK ---
+    def setup_issue_tab(self):
+        tk.Label(self.frame_issue, text="Issue a Book", font=("Arial", 14, "bold")).pack(pady=10)
+        
+        tk.Label(self.frame_issue, text="Book ID:").pack()
+        self.entry_issue_id = tk.Entry(self.frame_issue, width=30)
+        self.entry_issue_id.pack()
+        
+        tk.Label(self.frame_issue, text="Student Name:").pack()
+        self.entry_student = tk.Entry(self.frame_issue, width=30)
+        self.entry_student.pack()
+        
+        tk.Button(self.frame_issue, text="Issue Book", command=self.issue_book, bg="#2196F3", fg="white").pack(pady=10)
+
+    def issue_book(self):
+        book_id = self.entry_issue_id.get()
+        student = self.entry_student.get()
+        
+        # Check if book exists and is available
+        self.cur.execute("SELECT status FROM books WHERE book_id=?", (book_id,))
+        result = self.cur.fetchone()
+        
+        if result and result[0] == 'Available':
+            date_now = datetime.now().strftime("%Y-%m-%d")
+            self.cur.execute("INSERT INTO issues (book_id, student_name, issue_date) VALUES (?, ?, ?)", 
+                             (book_id, student, date_now))
+            self.cur.execute("UPDATE books SET status='Issued' WHERE book_id=?", (book_id,))
+            self.conn.commit()
+            messagebox.showinfo("Success", f"Book {book_id} issued to {student}")
+            self.load_books() # Refresh avail list
+        else:
+            messagebox.showerror("Error", "Book ID invalid or already issued.")
+
+    # --- TAB 3: RETURN & FINE CALCULATION ---
+    def setup_return_tab(self):
+        tk.Label(self.frame_return, text="Return Book & Calc Fine", font=("Arial", 14, "bold")).pack(pady=10)
+        
+        tk.Label(self.frame_return, text="Book ID to Return:").pack()
+        self.entry_return_id = tk.Entry(self.frame_return, width=30)
+        self.entry_return_id.pack()
+        
+        tk.Button(self.frame_return, text="Calculate Fine & Return", command=self.return_book, bg="#F44336", fg="white").pack(pady=10)
+        
+        self.lbl_result = tk.Label(self.frame_return, text="", font=("Arial", 12), fg="red")
+        self.lbl_result.pack(pady=10)
+
+    def return_book(self):
+        book_id = self.entry_return_id.get()
+        
+        self.cur.execute("SELECT issue_date FROM issues WHERE book_id=?", (book_id,))
+        result = self.cur.fetchone()
+        
+        if result:
+            issue_date_str = result[0]
+            issue_date = datetime.strptime(issue_date_str, "%Y-%m-%d")
+            return_date = datetime.now()
+            
+            # --- FINE LOGIC ---
+            # Suppose max days allowed = 7
+            days_kept = (return_date - issue_date).days
+            fine = 0
+            
+            if days_kept > 7:
+                extra_days = days_kept - 7
+                fine = extra_days * 10 # 10 Rs per day fine
+                msg = f"Late Return! Days: {days_kept}. Fine Amount: Rs. {fine}"
+            else:
+                msg = f"Returned on time. No Fine."
+            
+            # Process Return
+            self.cur.execute("DELETE FROM issues WHERE book_id=?", (book_id,))
+            self.cur.execute("UPDATE books SET status='Available' WHERE book_id=?", (book_id,))
+            self.conn.commit()
+            
+            self.lbl_result.config(text=msg)
+            messagebox.showinfo("Returned", msg)
+            self.load_books()
+        else:
+            messagebox.showerror("Error", "This Book ID is not currently issued.")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = LibraryApp(root)
+    root.mainloop()
